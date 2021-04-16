@@ -1,5 +1,5 @@
 use hyper::Body;
-use hyper::Client;
+use hyper::Client as HttpClient;
 use hyper::Request;
 use hyper::Response;
 use hyper::body::HttpBody;
@@ -38,7 +38,7 @@ impl DigestAuthCache {
 	/// The new challenge is then cached, and the request is retried with the new challenge.
 	pub async fn request<C, B, BuildRequest>(
 		&mut self,
-		client: &Client<C, B>,
+		client: &HttpClient<C, B>,
 		mut build_request: BuildRequest,
 	) -> Result<Response<Body>, Error>
 	where
