@@ -129,6 +129,20 @@ where
 		Ok(body)
 	}
 
+	/// Mastership request
+	pub async fn mastership_request(&mut self) -> Result<(), Error> {
+		let url : http::Uri = format!("{}/rw/mastership/request", self.root_url).parse().unwrap();
+		let _body = self.post_form(url, Vec::default()).await?;
+		Ok(())
+	}
+
+	/// Mastership release
+	pub async fn mastership_release(&mut self) -> Result<(), Error> {
+		let url : http::Uri = format!("{}/rw/mastership/release", self.root_url).parse().unwrap();
+		let _body = self.post_form(url, Vec::default()).await?;
+		Ok(())
+	}
+
 	/// Upload a file to the controller.
 	pub async fn upload_file(&mut self, path: &str, content_type: Mime, data: impl Into<Vec<u8>>) -> Result<(), Error> {
 		let url : http::Uri = format!("{}/fileservice/{}/?json=1", self.root_url, path).parse().unwrap();
