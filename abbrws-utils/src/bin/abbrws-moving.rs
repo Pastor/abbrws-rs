@@ -2,6 +2,8 @@ use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use yansi::Paint;
 
+use abbrws::Signal;
+
 #[derive(StructOpt)]
 #[structopt(setting(AppSettings::DeriveDisplayOrder))]
 #[structopt(setting(AppSettings::ColoredHelp))]
@@ -48,6 +50,8 @@ async fn main() {
     }
 }
 
+/// https://developercenter.robotstudio.com/api/rwsApi/
+/// https://developercenter.robotstudio.com/api/rwsApi/msh_actions_page.html
 async fn do_main(options: &Options) -> Result<(), String> {
     let connect = || {
         abbrws::Client::new(&options.host, &options.user, &options.password)
@@ -57,26 +61,35 @@ async fn do_main(options: &Options) -> Result<(), String> {
     eprintln!("user: {}", options.user);
 
     let mut client = connect()?;
-    master(&mut client, |_c: &mut abbrws::Client| {
-        let _coord = options.coord_x + options.coord_y + options.coord_z;
-        true
-    })
-    .await;
+
+    // parse_result_signals("iosystem_signals", abbrws::Client::get_signals(&mut client).await);
+    // parse_result_text("rw", abbrws::Client::rw(&mut client).await);
+    parse_result_text("grant_rmmp", abbrws::Client::grant_rmmp(&mut client).await);
+    // parse_result_text("mastership_domain_request", abbrws::Client::mastership_domain_request(&mut client, "motion").await);
+    parse_result("mastership_request", abbrws::Client::mastership_request(&mut client).await);
+    let coord = options.coord_x + options.coord_y + options.coord_z;
+    eprintln!("Coordinate: {}", coord);
+    parse_result("mastership_release", abbrws::Client::mastership_release(&mut client).await);
     Ok(())
 }
 
-#[allow(unused_must_use)]
-async fn master<Fun>(c: &mut abbrws::Client, mut f: Fun) -> bool
-where
-    Fun: FnMut(&mut abbrws::Client) -> bool,
-{
-    let mut result = false;
-    abbrws::Client::mastership_request(c).await.and_then(|_| {
-        Ok(async {
-            result = f(c);
-            abbrws::Client::mastership_release(c).await;
-            ()
-        })
-    });
-    result
+fn parse_result(name: &'static str, result: Result<(), abbrws::Error>) {
+    match result {
+        Ok(_) => eprintln!("ABB[{}]: success", name),
+        Err(err) => eprintln!("ABB[{}]: {:?}", name, err),
+    }
+}
+
+fn parse_result_text(name: &'static str, result: Result<String, abbrws::Error>) {
+    match result {
+        Ok(message) => eprintln!("ABB[{}]: success. Message: {:?}", name, message),
+        Err(err) => eprintln!("ABB[{}]: {:?}", name, err),
+    }
+}
+
+fn parse_result_signals(name: &'static str, result: Result<Vec<Signal>, abbrws::Error>) {
+    match result {
+        Ok(message) => eprintln!("ABB[{}]: success. Message: {:#?}", name, message),
+        Err(err) => eprintln!("ABB[{}]: {:?}", name, err),
+    }
 }

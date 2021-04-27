@@ -1,32 +1,30 @@
-mod digest_auth_cache;
+use std::convert::TryFrom;
 
 use cookie::Cookie;
 use cookie::CookieJar;
-use digest_auth_cache::DigestAuthCache;
 use hyper::body::HttpBody;
-use std::convert::TryFrom;
-
 pub use mime::Mime;
 
-mod error;
-
+use digest_auth_cache::DigestAuthCache;
 pub use error::Error;
-pub use error::RemoteFailureError;
 pub use error::MalformedContentTypeError;
+pub use error::RemoteFailureError;
 pub use error::UnexpectedContentTypeError;
-
-mod parse;
-
-pub use parse::file_service::DirEntry;
 pub use parse::file_service::Directory;
+pub use parse::file_service::DirEntry;
 pub use parse::file_service::File;
 pub use parse::signal::Signal;
 pub use parse::signal::SignalKind;
 pub use parse::signal::SignalValue;
+use url_encode::url_encode_query_value;
+
+mod digest_auth_cache;
+
+mod error;
+
+mod parse;
 
 mod url_encode;
-
-use url_encode::url_encode_query_value;
 
 pub struct Client<C = hyper::client::HttpConnector> {
     root_url: http::Uri,
@@ -36,6 +34,8 @@ pub struct Client<C = hyper::client::HttpConnector> {
 }
 
 type Request = hyper::Request<hyper::Body>;
+
+const ERROR_MESSAGE_LENGTH_LIMIT: usize = 150;
 
 /// ABB RWS client
 ///
@@ -136,13 +136,19 @@ impl<C> Client<C>
     /// Upload a file to the controller.
     pub async fn upload_file(&mut self, path: &str, content_type: Mime, data: impl Into<Vec<u8>>) -> Result<(), Error> {
         let url: http::Uri = format!("{}/fileservice/{}/?json=1", self.root_url, path).parse().unwrap();
-        self.put(url, content_type, data).await?;
+        self.put(url, Some(content_type), data).await?;
         Ok(())
     }
 
     /// Perform a GET request.
     pub async fn get(&mut self, url: http::Uri) -> Result<(Mime, Vec<u8>), Error> {
         self.request(|| hyper::Request::get(url.clone()).body(hyper::Body::empty())).await
+    }
+
+    pub async fn get_accept(&mut self, url: http::Uri, content_type: Mime) -> Result<(Mime, Vec<u8>), Error> {
+        self.request(|| hyper::Request::get(url.clone())
+            .header(hyper::header::ACCEPT, content_type.as_ref())
+            .body(hyper::Body::empty())).await
     }
 
     /// Perform a POST request with form data.
@@ -155,11 +161,17 @@ impl<C> Client<C>
     }
 
     /// Perform a POST request with form data.
-    pub async fn put(&mut self, url: http::Uri, content_type: Mime, data: impl Into<Vec<u8>>) -> Result<(Mime, Vec<u8>), Error> {
+    pub async fn put(&mut self, url: http::Uri, content_type: Option<Mime>, data: impl Into<Vec<u8>>) -> Result<(Mime, Vec<u8>), Error> {
         let data = data.into();
-        self.request(move || hyper::Request::post(url.clone())
-            .header(hyper::header::CONTENT_TYPE, content_type.as_ref())
-            .body(data.clone().into())
+        self.request(move || {
+            let mut request = hyper::Request::post(url.clone());
+            let typ = content_type.clone();
+            if typ.is_some() {
+                request = request
+                    .header(hyper::header::CONTENT_TYPE, typ.unwrap().as_ref())
+            }
+            request.body(data.clone().into())
+        }
         ).await
     }
 
@@ -200,7 +212,10 @@ impl<C> Client<C>
         } else {
             match content_type.essence_str() {
                 "text/plain" => {
-                    Err(plain_text_to_error(http_status, collect_body(response).await?).into())
+                    Err(plain_text_to_error(http_status, collect_body(response).await?, ERROR_MESSAGE_LENGTH_LIMIT).into())
+                }
+                "application/xhtml+xml" => {
+                    Err(plain_text_to_error(http_status, collect_body(response).await?, 1500).into())
                 }
                 "application/json" => {
                     let error = parse::parse_error(&collect_body(response).await?)?;
@@ -211,17 +226,46 @@ impl<C> Client<C>
         }
     }
 
+    pub async fn rw(&mut self) -> Result<String, Error> {
+        let url: http::Uri = format!("{}/rw", self.root_url).parse().unwrap();
+        let content_type = "application/hal+json;v=2.0".parse().unwrap_or(mime::APPLICATION_JSON);
+        let (_mime, body) = self.get_accept(url, content_type).await?;
+        let message = String::from_utf8(body).ok()
+            .unwrap_or_default();
+        Ok(message)
+    }
+
+    ///https://forums.robotstudio.com/discussion/11032/how-to-write-a-rapid-data-by-web-services-when-robot-controller-in-manual-mode
+    pub async fn grant_rmmp(&mut self) -> Result<String, Error> {
+        let url: http::Uri = format!("{}/users/rmmp?json=1", self.root_url).parse().unwrap();
+        let data = format!("privilege={}", url_encode_query_value("modify"));
+        let (_mime, body) = self.post_form(url, data).await?;
+        let message = String::from_utf8(body).ok()
+            .unwrap_or_default();
+        Ok(message)
+    }
+
+    pub async fn mastership_domain_request(&mut self, domain: &'static str) -> Result<String, Error> {
+        let url: http::Uri = format!("{}/rw/mastership/{}?action=request&json=1", self.root_url, domain).parse().unwrap();
+        let _content_type = "application/hal+json;v=2.0".parse().unwrap_or(mime::APPLICATION_JSON);
+        let (_mime, body) = self.put(url, None, Vec::default()).await?;
+        let message = String::from_utf8(body).ok()
+            .unwrap_or_default();
+        Ok(message)
+    }
+
     /// Mastership request
     pub async fn mastership_request(&mut self) -> Result<(), Error> {
-        let url: http::Uri = format!("{}/rw/mastership/request", self.root_url).parse().unwrap();
-        let _body = self.post_form(url, Vec::default()).await?;
+        let url: http::Uri = format!("{}/rw/mastership?action=request&json=1", self.root_url).parse().unwrap();
+        let _content_type = "application/hal+json;v=2.0".parse().unwrap_or(mime::APPLICATION_JSON);
+        let _body = self.put(url, None, Vec::default()).await?;
         Ok(())
     }
 
     /// Mastership release
     pub async fn mastership_release(&mut self) -> Result<(), Error> {
-        let url: http::Uri = format!("{}/rw/mastership/release", self.root_url).parse().unwrap();
-        let _body = self.post_form(url, Vec::default()).await?;
+        let url: http::Uri = format!("{}/rw/mastership?action=release&json=1", self.root_url).parse().unwrap();
+        let _body = self.put(url, None, Vec::default()).await?;
         Ok(())
     }
 }
@@ -230,7 +274,7 @@ fn check_content_type(actual: Mime, expected: Mime) -> Result<(), UnexpectedCont
     if actual.essence_str() == expected.essence_str() {
         Ok(())
     } else {
-        Err(UnexpectedContentTypeError { actual: actual, expected: String::from(expected.essence_str()) }.into())
+        Err(UnexpectedContentTypeError { actual, expected: String::from(expected.essence_str()) }.into())
     }
 }
 
@@ -248,9 +292,9 @@ fn get_content_type<B>(response: &hyper::Response<B>) -> Result<Mime, MalformedC
 }
 
 /// Convert a plain text HTTP response to a RemoteFailureError.
-fn plain_text_to_error(http_status: hyper::StatusCode, body: Vec<u8>) -> RemoteFailureError {
+fn plain_text_to_error(http_status: hyper::StatusCode, body: Vec<u8>, limit: usize) -> RemoteFailureError {
     let message = String::from_utf8(body).ok()
-        .filter(|x| x.len() <= 150)
+        .filter(|x| x.len() <= limit)
         .unwrap_or_default();
 
     RemoteFailureError {
