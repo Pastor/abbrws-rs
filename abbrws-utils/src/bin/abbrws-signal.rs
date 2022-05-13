@@ -9,6 +9,7 @@ use yansi::Paint;
 struct Options {
 	/// The host to connect to.
 	#[structopt(long, short)]
+	#[structopt(default_value = "127.0.0.1")]
 	host: String,
 
 	/// The user to authenticate as.

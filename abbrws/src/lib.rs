@@ -256,16 +256,17 @@ impl<C> Client<C>
 
     /// Mastership request
     pub async fn mastership_request(&mut self) -> Result<(), Error> {
-        let url: http::Uri = format!("{}/rw/mastership?action=request&json=1", self.root_url).parse().unwrap();
-        let _content_type = "application/hal+json;v=2.0".parse().unwrap_or(mime::APPLICATION_JSON);
-        let _body = self.put(url, None, Vec::default()).await?;
+        let url: http::Uri = format!("{}/rw/mastership?action=request", self.root_url).parse().unwrap();
+        let content_type = "application/x-www-form-urlencoded".parse().unwrap_or(mime::APPLICATION_JSON);
+        let _body = self.put(url, Some(content_type), Vec::default()).await?;
         Ok(())
     }
 
     /// Mastership release
     pub async fn mastership_release(&mut self) -> Result<(), Error> {
-        let url: http::Uri = format!("{}/rw/mastership?action=release&json=1", self.root_url).parse().unwrap();
-        let _body = self.put(url, None, Vec::default()).await?;
+        let url: http::Uri = format!("{}/rw/mastership?action=release", self.root_url).parse().unwrap();
+        let content_type = "application/x-www-form-urlencoded".parse().unwrap_or(mime::APPLICATION_JSON);
+        let _body = self.put(url, Some(content_type), Vec::default()).await?;
         Ok(())
     }
 }
